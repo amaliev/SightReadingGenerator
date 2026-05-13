@@ -79,6 +79,7 @@
 <script>
 const { Renderer, Stave, StaveNote, Formatter, Accidental, Voice, Beam } = VexFlow;
 
+// TODO: More key signature options
 const KEYS = {
   C: { notes: ['C4','D4','E4','F4','G4','A4','B4','C5','D5','E5','F5','G5'], keySpec: 'C', acc: {} },
   G: { notes: ['G3','A3','B3','C4','D4','E4','F#4','G4','A4','B4','C5','D5'], keySpec: 'G', acc: {'F':1} },
@@ -88,6 +89,7 @@ const KEYS = {
   E: { notes: ['E3','F#3','G3','A3','B3','C4','D4','E4','F#4','G4','A4','B4'], keySpec: 'Em', acc: {'F':1} },
 };
 
+// TODO: Extend to full guitar range, and more dropdown granularity
 const NOTE_FREQS = {
   'C3':130.81,'D3':146.83,'E3':164.81,'F3':174.61,'F#3':185,'G3':196,'A3':220,'Bb3':233.08,'B3':246.94,
   'C4':261.63,'C#4':277.18,'D4':293.66,'E4':329.63,'F4':349.23,'F#4':369.99,'G4':392,
@@ -95,6 +97,7 @@ const NOTE_FREQS = {
   'C5':523.25,'C#5':554.37,'D5':587.33,'E5':659.25,'F5':698.46,'F#5':739.99,'G5':783.99,'A5':880
 };
 
+// TODO: More rhythm variety
 const RHYTHM_PATTERNS = [
   [1,1,1,1],[2,1,1],[1,1,2],[2,2],[1,0.5,0.5,1,1],[1,1,0.5,0.5,1]
 ];
@@ -231,6 +234,7 @@ function drawScore() {
 }
 
 async function playMelody() {
+  // TODO: Use nicer tone for playback
   if (playing) return;
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
