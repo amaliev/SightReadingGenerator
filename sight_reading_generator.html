@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sight Reading Generator</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #fff; color: #111; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1a1a1a; color: #e0e0e0; }
+    }
+    .container { padding: 1.5rem 1rem; max-width: 700px; margin: 0 auto; }
+    h1 { font-size: 18px; font-weight: 500; margin-bottom: 1.25rem; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 1.25rem; align-items: center; }
+    .controls label { font-size: 13px; color: #666; }
+    @media (prefers-color-scheme: dark) { .controls label { color: #aaa; } }
+    .controls select {
+      font-size: 13px; padding: 5px 8px; border-radius: 8px;
+      border: 0.5px solid #ccc; background: #fff; color: #111;
+    }
+    @media (prefers-color-scheme: dark) {
+      .controls select { background: #2a2a2a; color: #e0e0e0; border-color: #555; }
+    }
+    .btn {
+      font-size: 13px; padding: 6px 14px; cursor: pointer;
+      border-radius: 8px; border: 0.5px solid #bbb;
+      background: #fff; color: #111;
+    }
+    .btn:hover { background: #f0f0f0; }
+    @media (prefers-color-scheme: dark) {
+      .btn { background: #2a2a2a; color: #e0e0e0; border-color: #555; }
+      .btn:hover { background: #333; }
+    }
+    .btn.play { background: #e6f1fb; color: #185fa5; border-color: #85b7eb; }
+    .btn.play:hover { opacity: 0.85; }
+    @media (prefers-color-scheme: dark) {
+      .btn.play { background: #0c447c; color: #b5d4f4; border-color: #378add; }
+    }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+    #score-wrap { width: 100%; }
+    .status { font-size: 12px; color: #999; margin-top: 8px; min-height: 16px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Sight reading generator</h1>
+  <div class="controls">
+    <label>Key</label>
+    <select id="key-select">
+      <option value="C">C major</option>
+      <option value="G">G major</option>
+      <option value="F">F major</option>
+      <option value="D">D major</option>
+      <option value="A">A minor</option>
+      <option value="E">E minor</option>
+    </select>
+    <label>Length</label>
+    <select id="len-select">
+      <option value="8">8 bars</option>
+      <option value="4">4 bars</option>
+      <option value="12">12 bars</option>
+    </select>
+    <label>Difficulty</label>
+    <select id="diff-select">
+      <option value="easy">Easy (steps only)</option>
+      <option value="medium" selected>Medium (steps + leaps)</option>
+      <option value="hard">Hard (larger leaps)</option>
+    </select>
+    <button class="btn" id="gen-btn">New melody</button>
+    <button class="btn play" id="play-btn">Play</button>
+    <button class="btn" id="stop-btn">Stop</button>
+  </div>
+  <div id="score-wrap"></div>
+  <div class="status" id="status"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/vexflow/build/cjs/vexflow.js"></script>
+<script>
+const { Renderer, Stave, StaveNote, Formatter, Accidental, Voice, Beam } = VexFlow;
+
+const KEYS = {
+  C: { notes: ['C4','D4','E4','F4','G4','A4','B4','C5','D5','E5','F5','G5'], keySpec: 'C', acc: {} },
+  G: { notes: ['G3','A3','B3','C4','D4','E4','F#4','G4','A4','B4','C5','D5'], keySpec: 'G', acc: {'F':1} },
+  F: { notes: ['F3','G3','A3','Bb3','C4','D4','E4','F4','G4','A4','Bb4','C5'], keySpec: 'F', acc: {'B':-1} },
+  D: { notes: ['D4','E4','F#4','G4','A4','B4','C#5','D5','E5','F#5','G5','A5'], keySpec: 'D', acc: {'F':1,'C':1} },
+  A: { notes: ['A3','B3','C4','D4','E4','F4','G4','A4','B4','C5','D5','E5'], keySpec: 'Am', acc: {} },
+  E: { notes: ['E3','F#3','G3','A3','B3','C4','D4','E4','F#4','G4','A4','B4'], keySpec: 'Em', acc: {'F':1} },
+};
+
+const NOTE_FREQS = {
+  'C3':130.81,'D3':146.83,'E3':164.81,'F3':174.61,'F#3':185,'G3':196,'A3':220,'Bb3':233.08,'B3':246.94,
+  'C4':261.63,'C#4':277.18,'D4':293.66,'E4':329.63,'F4':349.23,'F#4':369.99,'G4':392,
+  'A4':440,'Bb4':466.16,'B4':493.88,
+  'C5':523.25,'C#5':554.37,'D5':587.33,'E5':659.25,'F5':698.46,'F#5':739.99,'G5':783.99,'A5':880
+};
+
+const RHYTHM_PATTERNS = [
+  [1,1,1,1],[2,1,1],[1,1,2],[2,2],[1,0.5,0.5,1,1],[1,1,0.5,0.5,1]
+];
+
+const DUR_MAP = { 2: 'h', 1: 'q', 0.5: '8' };
+
+let melody = [];
+let audioCtx = null;
+let playing = false;
+let stopFlag = false;
+let currentNote = -1;
+let vexNotes = [];
+
+function parseNote(n) {
+  const m = n.match(/^([A-G])(#|b)?(\d)$/);
+  return m ? { letter: m[1], acc: m[2]||'', oct: parseInt(m[3]) } : null;
+}
+
+function toVexKey(note) {
+  const p = parseNote(note);
+  if (!p) return 'c/4';
+  return `${p.letter.toLowerCase()}${p.acc}/${p.oct}`;
+}
+
+function generateMelody() {
+  const key = document.getElementById('key-select').value;
+  const bars = parseInt(document.getElementById('len-select').value);
+  const diff = document.getElementById('diff-select').value;
+  const scale = KEYS[key].notes;
+  const maxLeap = diff === 'easy' ? 1 : diff === 'medium' ? 3 : 6;
+  melody = [];
+  let idx = Math.floor(scale.length * 0.3) + Math.floor(Math.random() * Math.floor(scale.length * 0.4));
+  for (let b = 0; b < bars; b++) {
+    const pat = RHYTHM_PATTERNS[Math.floor(Math.random() * RHYTHM_PATTERNS.length)];
+    for (let r of pat) {
+      let step = Math.floor(Math.random() * (maxLeap * 2 + 1)) - maxLeap;
+      idx = Math.max(0, Math.min(scale.length - 1, idx + step));
+      melody.push({ note: scale[idx], dur: r });
+    }
+  }
+}
+
+function drawScore() {
+  const wrap = document.getElementById('score-wrap');
+  wrap.innerHTML = '';
+
+  const key = document.getElementById('key-select').value;
+  const bars = parseInt(document.getElementById('len-select').value);
+  const keySpec = KEYS[key].keySpec;
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const inkColor = isDark ? '#e8e8e8' : '#111';
+
+  const BARS_PER_ROW = 4;
+  const rows = Math.ceil(bars / BARS_PER_ROW);
+  const W = Math.min(660, wrap.parentElement.offsetWidth || 660);
+  const ROW_H = 100;
+  const STAVE_TOP = 20;
+
+  const renderer = new Renderer(wrap, Renderer.Backends.SVG);
+  renderer.resize(W, (rows+1) * ROW_H);
+  const ctx = renderer.getContext();
+  ctx.setFont('Arial', 10);
+  ctx.setFillStyle(inkColor);
+  ctx.setStrokeStyle(inkColor);
+
+  const CLEF_W = 50;
+  const KEY_W = keySpec.length > 1 ? 20 : 10;
+  const FIRST_W = CLEF_W + KEY_W + 10;
+  const STAVE_W = (W - FIRST_W) / Math.max(BARS_PER_ROW, 1) - 1;
+
+  vexNotes = [];
+  let noteIdx = 0;
+
+  for (let row = 0; row < rows; row++) {
+    const barsThisRow = Math.min(BARS_PER_ROW, bars - row * BARS_PER_ROW);
+    const rowY = row * ROW_H + STAVE_TOP;
+
+    for (let b = 0; b < barsThisRow; b++) {
+      const isFirst = b === 0;
+      const x = isFirst ? 0 : FIRST_W + b * STAVE_W;
+      const w = isFirst ? FIRST_W + STAVE_W : STAVE_W;
+
+      const stave = new Stave(x, rowY, w);
+      if (isFirst) stave.addClef('treble').addKeySignature(keySpec).addTimeSignature('4/4');
+      stave.setContext(ctx).draw();
+
+      const barNotes = [];
+      let beats = 0;
+      while (noteIdx < melody.length && beats < 4) {
+        const { note, dur } = melody[noteIdx];
+        const durStr = DUR_MAP[dur] || 'q';
+        const sn = new StaveNote({ keys: [toVexKey(note)], duration: durStr, clef: 'treble' });
+
+        const p = parseNote(note);
+        <!-- if (p && p.acc) { -->
+        <!--   sn.addModifier(new Accidental(p.acc === '#' ? '#' : 'b'), 0); -->
+        <!-- } -->
+
+        sn.setStyle({
+          fillStyle: noteIdx === currentNote ? '#2563eb' : inkColor,
+          strokeStyle: noteIdx === currentNote ? '#2563eb' : inkColor,
+        });
+
+        vexNotes.push(sn);
+        barNotes.push(sn);
+        beats += dur;
+        noteIdx++;
+      }
+
+      if (barNotes.length > 0) {
+        const beams = Beam.generateBeams(barNotes);
+        Formatter.FormatAndDraw(ctx, stave, barNotes);
+        <!-- new Formatter().joinVoices([voice]).format([voice], w - 20); -->
+
+        beams.forEach((b) => {
+          b.setContext(ctx).draw();
+        });
+      }
+    }
+  }
+
+  // Dark mode: recolor any SVG elements VexFlow drew in black
+  if (isDark) {
+    const svgEl = wrap.querySelector('svg');
+    if (svgEl) {
+      svgEl.querySelectorAll('path, rect, line, polyline, polygon').forEach(el => {
+        const f = el.style.fill, s = el.style.stroke;
+        if (!f || f === 'black' || f === '#000000' || f === 'rgb(0, 0, 0)') el.style.fill = inkColor;
+        if (!s || s === 'black' || s === '#000000' || s === 'rgb(0, 0, 0)') el.style.stroke = inkColor;
+      });
+      svgEl.querySelectorAll('text').forEach(el => { el.style.fill = inkColor; });
+    }
+  }
+}
+
+async function playMelody() {
+  if (playing) return;
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
+  playing = true; stopFlag = false;
+  document.getElementById('play-btn').disabled = true;
+  document.getElementById('status').textContent = 'Playing...';
+
+  const bpm = 72, beatDur = 60 / bpm;
+  let t = audioCtx.currentTime + 0.05;
+
+  for (let i = 0; i < melody.length; i++) {
+    if (stopFlag) break;
+    const { note, dur } = melody[i];
+    const freq = NOTE_FREQS[note];
+    const nd = dur * beatDur;
+    if (freq) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.type = 'triangle'; osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.28, t + 0.02);
+      gain.gain.setValueAtTime(0.22, t + nd * 0.75);
+      gain.gain.linearRampToValueAtTime(0.001, t + nd * 0.95);
+      osc.start(t); osc.stop(t + nd);
+    }
+    const delay = (t - audioCtx.currentTime) * 1000;
+    await new Promise(res => setTimeout(res, Math.max(0, delay)));
+    if (stopFlag) break;
+    currentNote = i;
+    drawScore();
+    await new Promise(res => setTimeout(res, nd * 1000 * 0.88));
+    t += nd;
+  }
+
+  currentNote = -1; drawScore(); playing = false;
+  document.getElementById('play-btn').disabled = false;
+  document.getElementById('status').textContent = '';
+}
+
+document.getElementById('gen-btn').addEventListener('click', () => {
+  stopFlag = true; playing = false; currentNote = -1;
+  document.getElementById('play-btn').disabled = false;
+  generateMelody(); drawScore();
+  document.getElementById('status').textContent = '';
+});
+document.getElementById('play-btn').addEventListener('click', playMelody);
+document.getElementById('stop-btn').addEventListener('click', () => {
+  stopFlag = true; playing = false; currentNote = -1;
+  document.getElementById('play-btn').disabled = false;
+  drawScore(); document.getElementById('status').textContent = '';
+});
+
+generateMelody();
+drawScore();
+</script>
+</body>
+</html>
